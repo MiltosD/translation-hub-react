@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, lazy, Suspense } from 'react';
 import { useToast } from '@/hooks/use-toast';
+import { useDebounce } from '@/hooks/use-debounce';
 import {
   useReactTable,
   getCoreRowModel,
@@ -109,6 +110,10 @@ export const TranslationsTable = () => {
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [globalFilter, setGlobalFilter] = useState('');
+  
+  // Debounce search with 400ms delay and 3 character minimum
+  const debouncedGlobalFilter = useDebounce(globalFilter, 400, 3);
+  
   const [filters, setFilters] = useState({
     bucket: 'all',
     categories: 'all',
@@ -142,7 +147,7 @@ export const TranslationsTable = () => {
       pageSize: pagination.pageSize,
       sortBy: sorting[0]?.id,
       sortOrder: sorting[0]?.desc ? 'desc' : 'asc',
-      search: globalFilter,
+      search: debouncedGlobalFilter,
       filters,
     }],
     queryFn: () => api.getTranslations({
@@ -150,7 +155,7 @@ export const TranslationsTable = () => {
       pageSize: pagination.pageSize,
       sortBy: sorting[0]?.id,
       sortOrder: sorting[0]?.desc ? 'desc' : 'asc',
-      search: globalFilter,
+      search: debouncedGlobalFilter,
       filters: Object.fromEntries(
         Object.entries(filters).filter(([_, value]) => value !== '' && value !== 'all')
       ),
