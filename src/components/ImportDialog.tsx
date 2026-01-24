@@ -138,7 +138,7 @@ export const ImportDialog = ({
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
-          <Button variant="ghost" onClick={handleCancel}>
+          <Button variant="ghost" onClick={handleCancel} className="hover:bg-orange-100 dark:hover:bg-orange-950">
             Cancel
           </Button>
           <Button onClick={handleImport} disabled={!selectedFile || isLoading}>

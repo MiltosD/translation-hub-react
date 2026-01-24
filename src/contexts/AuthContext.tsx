@@ -11,6 +11,7 @@ interface AuthContextType {
   login: () => void;
   logout: () => void;
   getToken: () => string | undefined;
+  refreshToken: () => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -36,7 +37,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const token = keycloak.tokenParsed as {
         sub: string;
         preferred_username?: string;
-        client?: string;
+        connector?: string;
         realm_access?: { roles?: string[] };
         resource_access?: { [key: string]: { roles?: string[] } };
       };
@@ -56,7 +57,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setUser({
         id: token.sub,
         username: token.preferred_username || 'Unknown',
-        client: token.client || 'default',
+        client: token.connector || 'default',
         roles,
       });
     }
@@ -107,6 +108,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     return keycloak.token;
   };
 
+  const refreshToken = async (): Promise<boolean> => {
+    try {
+      const refreshed = await keycloak.updateToken(-1); // Force refresh
+      if (refreshed) {
+        parseUserFromToken();
+      }
+      return refreshed;
+    } catch (error) {
+      console.error('Token refresh failed:', error);
+      return false;
+    }
+  };
+
   const isAdmin = user?.roles.includes('admin') || false;
 
   return (
@@ -119,6 +133,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         login,
         logout,
         getToken,
+        refreshToken,
       }}
     >
       {children}

@@ -10,11 +10,7 @@ interface AdminCreateData {
   }>;
   message_field_name?: string;
   bucket?: string;
-  category?: {
-    CONNECTOR?: boolean;
-    CENTRAL?: boolean;
-    FC?: boolean;
-  };
+  category?: string[];
 }
 
 interface NonAdminCreateData {
@@ -51,31 +47,72 @@ class ApiService {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: 'Request failed' }));
-      throw new Error(error.message || `HTTP ${response.status}`);
+      const errorData = await response.json().catch(() => ({ message: 'Request failed' }));
+      
+      // Format field-specific errors
+      if (errorData && typeof errorData === 'object' && !errorData.message) {
+        const formattedErrors: string[] = [];
+        
+        for (const [field, errors] of Object.entries(errorData)) {
+          if (Array.isArray(errors)) {
+            errors.forEach(err => {
+              formattedErrors.push(`${field}\n${err}`);
+            });
+          } else if (typeof errors === 'string') {
+            formattedErrors.push(`${field}\n${errors}`);
+          }
+        }
+        
+        if (formattedErrors.length > 0) {
+          const error = new Error(formattedErrors.join('\n\n')) as Error & { details: unknown };
+          error.details = errorData;
+          throw error;
+        }
+      }
+      
+      // Fallback to regular error or stringify the whole response
+      const errorMessage = errorData.message || 
+        (typeof errorData === 'object' ? JSON.stringify(errorData, null, 2) : 'Request failed');
+      const error = new Error(errorMessage) as Error & { details: unknown };
+      error.details = errorData;
+      throw error;
     }
 
-    return response.json();
+    // Handle responses with no content (like DELETE)
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      return undefined as T;
+    }
+
+    // Handle empty responses
+    const text = await response.text();
+    return text ? JSON.parse(text) : undefined as T;
   }
 
   // Translations CRUD
   async getTranslations(params?: {
     search?: string;
+    exactMatch?: boolean;
     page?: number;
     pageSize?: number;
     sortBy?: string;
     sortOrder?: 'asc' | 'desc';
-    filters?: Record<string, string>;
+    filters?: Record<string, string | string[]>;
   }): Promise<{ data: Translation[]; total: number }> {
     const queryParams = new URLSearchParams();
-    if (params?.search) queryParams.set('search', params.search);
+    if (params?.search) {
+      const searchParam = params.exactMatch ? 'exact' : 'search';
+      queryParams.set(searchParam, params.search);
+    }
     if (params?.page) queryParams.set('page', params.page.toString());
-    if (params?.pageSize) queryParams.set('pageSize', params.pageSize.toString());
-    if (params?.sortBy) queryParams.set('sortBy', params.sortBy);
-    if (params?.sortOrder) queryParams.set('sortOrder', params.sortOrder);
     if (params?.filters) {
       Object.entries(params.filters).forEach(([key, value]) => {
-        queryParams.set(`filter_${key}`, value);
+        if (Array.isArray(value)) {
+          // For array values, add multiple parameters with the same name
+          value.forEach(v => queryParams.append(`filter_${key}`, v));
+        } else {
+          queryParams.set(`filter_${key}`, value);
+        }
       });
     }
 
@@ -122,7 +159,7 @@ class ApiService {
   }
 
   async deleteTranslations(ids: number[]): Promise<void> {
-    await this.request<void>(`${endpoints.translations}/bulk-delete`, {
+    await this.request<void>(`${endpoints.translations}/bulk-delete/`, {
       method: 'POST',
       body: JSON.stringify({ ids }),
     });

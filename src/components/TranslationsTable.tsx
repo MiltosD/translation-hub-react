@@ -92,7 +92,7 @@ interface AdminCreateRequest {
   }>;
   message_field_name?: string;
   bucket?: string;
-  category?: string;
+  category?: string[];
 }
 
 interface NonAdminCreateRequest {
@@ -110,13 +110,18 @@ export const TranslationsTable = () => {
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [globalFilter, setGlobalFilter] = useState('');
+  const [exactMatch, setExactMatch] = useState(false);
   
-  // Debounce search with 400ms delay and 3 character minimum
-  const debouncedGlobalFilter = useDebounce(globalFilter, 400, 3);
+  // Debounce search with 500ms delay and 2 character minimum
+  const debouncedGlobalFilter = useDebounce(globalFilter, 500, 2);
   
-  const [filters, setFilters] = useState({
+  const [filters, setFilters] = useState<{
+    bucket: string;
+    categories: string[];
+    client: string;
+  }>({
     bucket: 'all',
-    categories: 'all',
+    categories: [],
     client: '',
   });
   const [pagination, setPagination] = useState({
@@ -145,21 +150,39 @@ export const TranslationsTable = () => {
     queryKey: ['translations', {
       page: pagination.pageIndex,
       pageSize: pagination.pageSize,
-      sortBy: sorting[0]?.id,
+      sortBy: sorting[0]?.id || 'id',
       sortOrder: sorting[0]?.desc ? 'desc' : 'asc',
       search: debouncedGlobalFilter,
+      exactMatch,
       filters,
     }],
-    queryFn: () => api.getTranslations({
-      page: pagination.pageIndex + 1, // API uses 1-based pagination
-      pageSize: pagination.pageSize,
-      sortBy: sorting[0]?.id,
-      sortOrder: sorting[0]?.desc ? 'desc' : 'asc',
-      search: debouncedGlobalFilter,
-      filters: Object.fromEntries(
-        Object.entries(filters).filter(([_, value]) => value !== '' && value !== 'all')
-      ),
-    }),
+    queryFn: () => {
+      // Prepare filters - convert categories array to proper format for API
+      const apiFilters: Record<string, string | string[]> = {};
+      
+      if (filters.bucket && filters.bucket !== 'all') {
+        apiFilters.bucket = filters.bucket;
+      }
+      
+      if (filters.categories.length > 0) {
+        // Send as array for multiple filter_categories params
+        apiFilters.categories = filters.categories;
+      }
+      
+      if (filters.client) {
+        apiFilters.client = filters.client;
+      }
+      
+      return api.getTranslations({
+        page: pagination.pageIndex + 1, // API uses 1-based pagination
+        pageSize: pagination.pageSize,
+        sortBy: sorting[0]?.id || 'id', // Default sort by ID
+        sortOrder: sorting[0]?.desc ? 'desc' : 'asc',
+        search: debouncedGlobalFilter,
+        exactMatch,
+        filters: apiFilters,
+      });
+    },
   });
 
   const data = translationsData?.data || [];
@@ -208,15 +231,40 @@ export const TranslationsTable = () => {
   const deleteMutation = useMutation({
     mutationFn: (id: number) => api.deleteTranslation(id),
     onSuccess: () => {
+      // Invalidate queries to refetch data at current page
       queryClient.invalidateQueries({ queryKey: ['translations'] });
+      toast({
+        title: "Success",
+        description: "Translation deleted successfully",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete translation",
+        variant: "destructive",
+      });
     },
   });
 
   const bulkDeleteMutation = useMutation({
     mutationFn: (ids: number[]) => api.deleteTranslations(ids),
     onSuccess: () => {
+      // Invalidate queries to refetch data at current page
       queryClient.invalidateQueries({ queryKey: ['translations'] });
+      // Clear row selection after successful delete
       setRowSelection({});
+      toast({
+        title: "Success",
+        description: `${Object.keys(rowSelection).length} translation(s) deleted successfully`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete translations",
+        variant: "destructive",
+      });
     },
   });
 
@@ -239,7 +287,44 @@ export const TranslationsTable = () => {
 
   const getCategories = (category: Translation['category']) => {
     if (!category) return '-';
-    return category;
+    
+    // Parse the category - could be a string like "CONNECTOR", "FC", or JSON array like '["CONNECTOR", "FC"]'
+    let categories: string[] = [];
+    
+    // Try parsing as JSON array first
+    try {
+      const parsed = JSON.parse(category);
+      if (Array.isArray(parsed)) {
+        categories = parsed;
+      } else {
+        categories = [String(parsed)];
+      }
+    } catch {
+      // If not JSON, it's a simple string or comma-separated
+      const categoryStr = String(category);
+      if (categoryStr.includes(',')) {
+        categories = categoryStr.split(',').map(c => c.trim());
+      } else {
+        categories = [categoryStr];
+      }
+    }
+    
+    // Map to display names: CONNECTOR -> CON, FC -> FC
+    const displayNames = categories
+      .filter(cat => cat && String(cat).trim()) // Filter out empty/null values
+      .map(cat => {
+        const upperCat = String(cat).toUpperCase().trim();
+        if (upperCat === 'CONNECTOR') return 'CON';
+        if (upperCat === 'FC') return 'FC';
+        return cat;
+      });
+    
+    return displayNames.length > 0 ? displayNames.join('/') : '-';
+  };
+
+  const hasAvailableLanguages = (item: Translation) => {
+    const existingLanguages = item.translations.map(t => t.language);
+    return appConfig.languages.some(lang => !existingLanguages.includes(lang.code));
   };
 
   const handleAddLanguage = (item: Translation) => {
@@ -287,8 +372,16 @@ export const TranslationsTable = () => {
     setSelectedItem(null);
   };
 
-  const handleSaveTranslations = (translations: TranslationValue[]) => {
+  const handleSaveTranslations = async (translations: TranslationValue[], newSourceText?: string) => {
     if (selectedItem) {
+      // Update source text if changed (admin only)
+      if (newSourceText && newSourceText !== selectedItem.text) {
+        await updateMutation.mutateAsync({
+          id: selectedItem.id,
+          data: { text: newSourceText }
+        });
+      }
+
       // Create a map of existing translations for comparison
       const existingTranslationsMap = selectedItem.translations.reduce((acc, t) => {
         acc[t.language] = t.value;
@@ -296,16 +389,20 @@ export const TranslationsTable = () => {
       }, {} as Record<string, string>);
 
       // Only update translations that have actually changed
-      translations.forEach((translation) => {
-        const existingValue = existingTranslationsMap[translation.language];
-        if (existingValue !== translation.value) {
-          updateLanguageMutation.mutate({
+      const updatePromises = translations
+        .filter((translation) => {
+          const existingValue = existingTranslationsMap[translation.language];
+          return existingValue !== translation.value;
+        })
+        .map((translation) =>
+          updateLanguageMutation.mutateAsync({
             id: selectedItem.id,
             language: translation.language,
             value: translation.value
-          });
-        }
-      });
+          })
+        );
+
+      await Promise.all(updatePromises);
     }
     setEditDialogOpen(false);
     setSelectedItem(null);
@@ -314,16 +411,9 @@ export const TranslationsTable = () => {
   const handleSaveNewItem = (item: AdminCreateRequest | NonAdminCreateRequest) => {
     console.log('handleSaveNewItem called with:', item);
     
-    // For admin requests, send the data directly (backend expects different format)
+    // For admin requests, send the data directly
     if ('translations' in item) {
-      // Transform string category to object format
-      const categoryObject = item.category ? {
-        CONNECTOR: item.category === 'CONNECTOR',
-        CENTRAL: item.category === 'CENTRAL', 
-        FC: item.category === 'FC'
-      } : undefined;
-
-      // Admin request - send as-is but transform translations to remove 'auto' field
+      // Admin request - send category as array
       const adminData = {
         text: item.text,
         translations: item.translations.map(t => ({
@@ -332,7 +422,7 @@ export const TranslationsTable = () => {
         })),
         ...(item.message_field_name && { message_field_name: item.message_field_name }),
         ...(item.bucket && { bucket: item.bucket }),
-        ...(categoryObject && { category: categoryObject }),
+        ...(item.category && item.category.length > 0 && { category: item.category }),
       };
       console.log('Sending admin data:', adminData);
       createMutation.mutate(adminData);
@@ -405,23 +495,7 @@ export const TranslationsTable = () => {
     // ID column
     baseColumns.push({
       accessorKey: 'id',
-      header: ({ column }) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-3 h-8"
-          onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
-        >
-          ID
-          {column.getIsSorted() === 'asc' ? (
-            <ArrowUp className="ml-2 h-4 w-4" />
-          ) : column.getIsSorted() === 'desc' ? (
-            <ArrowDown className="ml-2 h-4 w-4" />
-          ) : (
-            <ArrowUpDown className="ml-2 h-4 w-4" />
-          )}
-        </Button>
-      ),
+      header: 'ID',
       cell: ({ row }) => (
         <span className="font-mono text-xs text-muted-foreground">
           {row.getValue('id')}
@@ -433,23 +507,7 @@ export const TranslationsTable = () => {
     // Text column
     baseColumns.push({
       accessorKey: 'text',
-      header: ({ column }) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-3 h-8"
-          onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
-        >
-          Text
-          {column.getIsSorted() === 'asc' ? (
-            <ArrowUp className="ml-2 h-4 w-4" />
-          ) : column.getIsSorted() === 'desc' ? (
-            <ArrowDown className="ml-2 h-4 w-4" />
-          ) : (
-            <ArrowUpDown className="ml-2 h-4 w-4" />
-          )}
-        </Button>
-      ),
+      header: 'Text',
       cell: ({ row }) => (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -495,7 +553,7 @@ export const TranslationsTable = () => {
         },
         {
           accessorKey: 'client',
-          header: 'Client',
+          header: 'Connector',
           cell: ({ row }) => (
             <Badge variant="secondary">{row.getValue('client')}</Badge>
           ),
@@ -517,11 +575,14 @@ export const TranslationsTable = () => {
                 size="icon"
                 className="h-8 w-8"
                 onClick={() => handleAddLanguage(row.original)}
+                disabled={!hasAvailableLanguages(row.original)}
               >
                 <Languages className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Add Language</TooltipContent>
+            <TooltipContent>
+              {hasAvailableLanguages(row.original) ? 'Add Language' : 'All languages added'}
+            </TooltipContent>
           </Tooltip>
 
           <Tooltip>
@@ -590,53 +651,67 @@ export const TranslationsTable = () => {
 
   return (
     <div className="space-y-4">
-      {/* Toolbar */}
-      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search text or translations... (use quotes for exact match)"
-            value={globalFilter}
-            onChange={(e) => setGlobalFilter(e.target.value)}
-            className="pl-9"
-          />
-        </div>
-
+      {/* Bulk Actions Toolbar */}
+      {isAdmin && selectedCount > 0 && (
         <div className="flex items-center gap-2">
-          {isAdmin && selectedCount > 0 && (
-            <>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={handleBulkDelete}
-              >
-                <Trash2 className="h-4 w-4 mr-2" />
-                Delete ({selectedCount})
-              </Button>
-              <Suspense fallback={<div>Loading...</div>}>
-                <ExportMenu
-                  onExport={handleExport}
-                  selectedCount={selectedCount}
-                />
-              </Suspense>
-            </>
-          )}
-
-          <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
-            <Upload className="h-4 w-4 mr-2" />
-            Import
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={handleBulkDelete}
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Delete ({selectedCount})
           </Button>
-
-          <Button size="sm" onClick={() => setAddNewOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add New
-          </Button>
+          <Suspense fallback={<div>Loading...</div>}>
+            <ExportMenu
+              onExport={handleExport}
+              selectedCount={selectedCount}
+            />
+          </Suspense>
         </div>
-      </div>
+      )}
 
-      {/* Admin Filters */}
-      {isAdmin && (
+      {/* Search and Filters */}
+      {isAdmin ? (
         <div className="flex flex-wrap gap-4 items-end">
+          <div className="grid gap-2 flex-1 min-w-[200px] max-w-md">
+            <Label htmlFor="search-filter">Search</Label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                id="search-filter"
+                placeholder="Search text or translations..."
+                value={globalFilter}
+                onChange={(e) => setGlobalFilter(e.target.value)}
+                className="pl-9 pr-9"
+              />
+              {globalFilter && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6"
+                  onClick={() => setGlobalFilter('')}
+                >
+                  <span className="sr-only">Clear search</span>
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 pb-2">
+            <Checkbox
+              id="exact-match"
+              checked={exactMatch}
+              onCheckedChange={(checked) => setExactMatch(!!checked)}
+            />
+            <Label htmlFor="exact-match" className="text-sm font-normal cursor-pointer whitespace-nowrap">
+              Match exact
+            </Label>
+          </div>
+
           <div className="grid gap-2 min-w-[150px]">
             <Label htmlFor="bucket-filter">Bucket</Label>
             <Select
@@ -657,34 +732,108 @@ export const TranslationsTable = () => {
             </Select>
           </div>
 
-          <div className="grid gap-2 min-w-[150px]">
-            <Label htmlFor="categories-filter">Categories</Label>
-            <Select
-              value={filters.categories}
-              onValueChange={(value) => setFilters(prev => ({ ...prev, categories: value }))}
-            >
-              <SelectTrigger id="categories-filter">
-                <SelectValue placeholder="All categories" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All categories</SelectItem>
-                {appConfig.categories.map((category) => (
-                  <SelectItem key={category.id} value={category.id}>
-                    {category.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="grid gap-2 min-w-[200px]">
+            <Label>Categories</Label>
+            <div className="flex gap-4 p-3 border rounded-md">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="category-connector-filter"
+                  checked={filters.categories.includes('CONNECTOR')}
+                  onCheckedChange={(checked) => {
+                    setFilters(prev => ({
+                      ...prev,
+                      categories: checked
+                        ? [...prev.categories, 'CONNECTOR']
+                        : prev.categories.filter(c => c !== 'CONNECTOR')
+                    }));
+                  }}
+                />
+                <Label htmlFor="category-connector-filter" className="cursor-pointer font-normal">
+                  CONNECTOR
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="category-fc-filter"
+                  checked={filters.categories.includes('FC')}
+                  onCheckedChange={(checked) => {
+                    setFilters(prev => ({
+                      ...prev,
+                      categories: checked
+                        ? [...prev.categories, 'FC']
+                        : prev.categories.filter(c => c !== 'FC')
+                    }));
+                  }}
+                />
+                <Label htmlFor="category-fc-filter" className="cursor-pointer font-normal">
+                  FC
+                </Label>
+              </div>
+            </div>
           </div>
 
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setFilters({ bucket: 'all', categories: 'all', client: '' })}
-            disabled={filters.bucket === 'all' && filters.categories === 'all' && !filters.client}
+            onClick={() => setFilters({ bucket: 'all', categories: [], client: '' })}
+            disabled={filters.bucket === 'all' && filters.categories.length === 0 && !filters.client}
           >
             Clear Filters
           </Button>
+
+          <div className="flex items-end gap-2 ml-auto">
+            <Button size="sm" onClick={() => setAddNewOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add New
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-4 items-end">
+          <div className="grid gap-2 flex-1 min-w-[200px] max-w-md">
+            <Label htmlFor="search-filter">Search</Label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                id="search-filter"
+                placeholder="Search text or translations..."
+                value={globalFilter}
+                onChange={(e) => setGlobalFilter(e.target.value)}
+                className="pl-9 pr-9"
+              />
+              {globalFilter && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6"
+                  onClick={() => setGlobalFilter('')}
+                >
+                  <span className="sr-only">Clear search</span>
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 pb-2">
+            <Checkbox
+              id="exact-match"
+              checked={exactMatch}
+              onCheckedChange={(checked) => setExactMatch(!!checked)}
+            />
+            <Label htmlFor="exact-match" className="text-sm font-normal cursor-pointer whitespace-nowrap">
+              Match exact
+            </Label>
+          </div>
+
+          {/* <div className="flex items-end gap-2 ml-auto">
+            <Button size="sm" onClick={() => setAddNewOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add New
+            </Button>
+          </div> */}
         </div>
       )}
 
@@ -745,14 +894,14 @@ export const TranslationsTable = () => {
       </div>
 
       {/* Table */}
-      <div className="rounded-md border bg-card max-h-[600px] overflow-auto">
+      <div className="rounded-md border bg-card max-h-[calc(100vh-380px)] overflow-auto">
         {isLoading ? (
           <div className="flex items-center justify-center h-32">
             <div className="text-muted-foreground">Loading translations...</div>
           </div>
         ) : (
           <Table>
-            <TableHeader>
+            <TableHeader className="sticky top-0 z-10">
               {table.getHeaderGroups().map((headerGroup) => (
                 <TableRow key={headerGroup.id} className="bg-table-header hover:bg-table-header">
                   {headerGroup.headers.map((header) => (
@@ -792,7 +941,10 @@ export const TranslationsTable = () => {
                     </TableRow>
                   </ContextMenuTrigger>
                   <ContextMenuContent>
-                    <ContextMenuItem onClick={() => handleAddLanguage(row.original)}>
+                    <ContextMenuItem 
+                      onClick={() => handleAddLanguage(row.original)}
+                      disabled={!hasAvailableLanguages(row.original)}
+                    >
                       <Languages className="h-4 w-4 mr-2" />
                       Add Language
                     </ContextMenuItem>
@@ -849,6 +1001,7 @@ export const TranslationsTable = () => {
         />
 
         <AddNewItemDialog
+          key={addNewOpen ? 'add-new-open' : 'add-new-closed'}
           open={addNewOpen}
           onOpenChange={setAddNewOpen}
           onSave={handleSaveNewItem}

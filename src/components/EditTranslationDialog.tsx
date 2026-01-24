@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -16,6 +17,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
 import { appConfig } from '@/config/app.config';
 import type { TranslationValue, Translation } from '@/types/translation';
 
@@ -23,7 +26,7 @@ interface EditTranslationDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   translations: TranslationValue[];
-  onSave: (translations: TranslationValue[]) => void;
+  onSave: (translations: TranslationValue[], newSourceText?: string) => Promise<void>;
   translation: Translation | null;
 }
 
@@ -34,15 +37,21 @@ export const EditTranslationDialog = ({
   onSave,
   translation,
 }: EditTranslationDialogProps) => {
+  const { toast } = useToast();
+  const { isAdmin } = useAuth();
   const [editedTranslations, setEditedTranslations] = useState<TranslationValue[]>([]);
   const [selectedLanguage, setSelectedLanguage] = useState<string>('');
+  const [sourceText, setSourceText] = useState<string>('');
+  const [isEditingSource, setIsEditingSource] = useState<boolean>(false);
 
   useEffect(() => {
     if (open) {
       setEditedTranslations([...translations]);
       setSelectedLanguage(translations[0]?.language || '');
+      setSourceText(translation?.text || '');
+      setIsEditingSource(false);
     }
-  }, [open, translations]);
+  }, [open, translations, translation]);
 
   const currentTranslation = useMemo(() => {
     return editedTranslations.find((t) => t.language === selectedLanguage);
@@ -64,9 +73,21 @@ export const EditTranslationDialog = ({
     onOpenChange(false);
   };
 
-  const handleSave = () => {
-    onSave(editedTranslations);
-    onOpenChange(false);
+  const handleSave = async () => {
+    try {
+      await onSave(editedTranslations, sourceText !== translation?.text ? sourceText : undefined);
+      toast({
+        title: "Success",
+        description: "Translation updated successfully",
+      });
+      onOpenChange(false);
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to update translation",
+        variant: "destructive",
+      });
+    }
   };
 
   const getLanguageName = (code: string) => {
@@ -77,17 +98,32 @@ export const EditTranslationDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[700px]">
         <DialogHeader>
           <DialogTitle>
             Edit Translation {translation && `(ID: ${translation.id})`}
           </DialogTitle>
           {translation && (
             <div className="text-sm text-muted-foreground mt-2">
-              <div className="font-medium">Source Text:</div>
-              <div className="mt-1 p-2 bg-muted rounded text-sm whitespace-pre-wrap">
-                {translation.text}
+              <div className="font-medium">
+                Source Text{isAdmin && ' (double-click to edit)'}:
               </div>
+              {isAdmin && isEditingSource ? (
+                <Textarea
+                  value={sourceText}
+                  onChange={(e) => setSourceText(e.target.value)}
+                  onBlur={() => setIsEditingSource(false)}
+                  autoFocus
+                  className="mt-1 min-h-[100px] resize-none"
+                />
+              ) : (
+                <div
+                  className="mt-1 p-2 bg-muted rounded text-sm whitespace-pre-wrap cursor-text"
+                  onDoubleClick={() => isAdmin && setIsEditingSource(true)}
+                >
+                  {sourceText}
+                </div>
+              )}
             </div>
           )}
         </DialogHeader>
@@ -103,11 +139,14 @@ export const EditTranslationDialog = ({
                 <SelectValue placeholder="Select language to edit" />
               </SelectTrigger>
               <SelectContent>
-                {editedTranslations.map((t) => (
-                  <SelectItem key={t.language} value={t.language}>
-                    {getLanguageName(t.language)} ({t.language.toUpperCase()})
-                  </SelectItem>
-                ))}
+                {editedTranslations
+                  .filter((t) => appConfig.languages.some((lang) => lang.code === t.language))
+                  .sort((a, b) => getLanguageName(a.language).localeCompare(getLanguageName(b.language)))
+                  .map((t) => (
+                    <SelectItem key={t.language} value={t.language}>
+                      {getLanguageName(t.language)} ({t.language.toUpperCase()})
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
           </div>
@@ -125,10 +164,10 @@ export const EditTranslationDialog = ({
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
-          <Button variant="outline" onClick={handleClear}>
+          <Button variant="outline" onClick={handleClear} className="bg-background hover:bg-muted hover:text-foreground">
             Clear
           </Button>
-          <Button variant="ghost" onClick={handleCancel}>
+          <Button variant="ghost" onClick={handleCancel} className="hover:bg-muted hover:text-foreground">
             Cancel
           </Button>
           <Button onClick={handleSave}>

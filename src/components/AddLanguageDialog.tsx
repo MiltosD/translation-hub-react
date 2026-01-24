@@ -38,9 +38,9 @@ export const AddLanguageDialog = ({
   const [value, setValue] = useState('');
 
   const availableLanguages = useMemo(() => {
-    return appConfig.languages.filter(
-      (lang) => !existingLanguages.includes(lang.code)
-    );
+    return appConfig.languages
+      .filter((lang) => !existingLanguages.includes(lang.code))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }, [existingLanguages]);
 
   const handleClear = () => {
@@ -66,7 +66,7 @@ export const AddLanguageDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[700px]">
         <DialogHeader>
           <DialogTitle>
             Add Language Translation {translation && `(ID: ${translation.id})`}
@@ -120,10 +120,10 @@ export const AddLanguageDialog = ({
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
-          <Button variant="outline" onClick={handleClear} disabled={!value}>
+          <Button variant="outline" onClick={handleClear} disabled={!value} className="bg-gray-50 hover:bg-gray-100 dark:bg-gray-900 dark:hover:bg-gray-800">
             Clear
           </Button>
-          <Button variant="ghost" onClick={handleCancel}>
+          <Button variant="ghost" onClick={handleCancel} className="hover:bg-orange-100 dark:hover:bg-orange-950">
             Cancel
           </Button>
           <Button

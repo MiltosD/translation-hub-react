@@ -27,8 +27,6 @@ export const appConfig = {
   languages: [
     { code: 'bg', name: 'Bulgarian' },
     { code: 'hr', name: 'Croatian' },
-    { code: 'sr', name: 'Serbian' },
-    { code: 'en', name: 'English' },
     { code: 'de', name: 'German' },
     { code: 'fr', name: 'French' },
     { code: 'es', name: 'Spanish' },
@@ -39,7 +37,6 @@ export const appConfig = {
     { code: 'sv', name: 'Swedish' },
     { code: 'da', name: 'Danish' },
     { code: 'fi', name: 'Finnish' },
-    { code: 'no', name: 'Norwegian' },
     { code: 'nb', name: 'Norwegian Bokmål' },
     { code: 'nn', name: 'Norwegian Nynorsk' },
     { code: 'el', name: 'Greek' },
@@ -65,7 +62,6 @@ export const appConfig = {
   // Category options (admin only)
   categories: [
     { id: 'CONNECTOR', name: 'CONNECTOR' },
-    { id: 'CENTRAL', name: 'CENTRAL' },
     { id: 'FC', name: 'FC' },
   ],
 

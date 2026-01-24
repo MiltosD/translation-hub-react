@@ -33,7 +33,7 @@ interface AdminCreateRequest {
   }>;
   message_field_name?: string;
   bucket?: string;
-  category?: string;
+  category?: string[];
 }
 
 interface NonAdminCreateRequest {
@@ -63,7 +63,7 @@ export const AddNewItemDialog = ({
   const [selectedLanguage, setSelectedLanguage] = useState('');
   const [currentTranslationValue, setCurrentTranslationValue] = useState('');
   const [bucket, setBucket] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('');
+  const [selectedCategory, setSelectedCategory] = useState<string[]>([]);
   const [fieldName, setFieldName] = useState('');
 
   const availableLanguages = appConfig.languages.filter(
@@ -112,7 +112,7 @@ export const AddNewItemDialog = ({
         })),
         message_field_name: fieldName.trim() || undefined,
         bucket: bucket || undefined,
-        category: selectedCategory || undefined,
+        category: selectedCategory.length > 0 ? selectedCategory : undefined,
       };
       console.log('Admin request:', adminRequest);
       onSave(adminRequest);
@@ -136,7 +136,7 @@ export const AddNewItemDialog = ({
     setSelectedLanguage('');
     setCurrentTranslationValue('');
     setBucket('');
-    setSelectedCategory('');
+    setSelectedCategory([]);
     setFieldName('');
   };
 
@@ -144,7 +144,7 @@ export const AddNewItemDialog = ({
     return appConfig.languages.find((l) => l.code === code)?.name || code;
   };
 
-  const isValid = text.trim() && (isAdmin ? translations.length > 0 : true);
+  const isValid = text.trim() && (isAdmin ? (translations.length > 0 && (bucket !== 'MESSAGES' || fieldName.trim())) : true);
 
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
@@ -189,29 +189,53 @@ export const AddNewItemDialog = ({
 
               <div className="grid gap-2">
                 <Label htmlFor="category">Category</Label>
-                <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                  <SelectTrigger id="category">
-                    <SelectValue placeholder="Select category (optional)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {appConfig.categories.map((cat) => (
-                      <SelectItem key={cat.id} value={cat.id}>
-                        {cat.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="flex gap-4">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="category-connector"
+                      checked={selectedCategory.includes('CONNECTOR')}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          setSelectedCategory([...selectedCategory, 'CONNECTOR']);
+                        } else {
+                          setSelectedCategory(selectedCategory.filter(c => c !== 'CONNECTOR'));
+                        }
+                      }}
+                    />
+                    <Label htmlFor="category-connector" className="cursor-pointer font-normal">
+                      CONNECTOR
+                    </Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="category-fc"
+                      checked={selectedCategory.includes('FC')}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          setSelectedCategory([...selectedCategory, 'FC']);
+                        } else {
+                          setSelectedCategory(selectedCategory.filter(c => c !== 'FC'));
+                        }
+                      }}
+                    />
+                    <Label htmlFor="category-fc" className="cursor-pointer font-normal">
+                      FC
+                    </Label>
+                  </div>
+                </div>
               </div>
 
-              <div className="grid gap-2">
-                <Label htmlFor="fieldName">Field Name (optional)</Label>
-                <Input
-                  id="fieldName"
-                  value={fieldName}
-                  onChange={(e) => setFieldName(e.target.value)}
-                  placeholder="Enter field name..."
-                />
-              </div>
+              {bucket === 'MESSAGES' && (
+                <div className="grid gap-2">
+                  <Label htmlFor="fieldName">Field Name *</Label>
+                  <Input
+                    id="fieldName"
+                    value={fieldName}
+                    onChange={(e) => setFieldName(e.target.value)}
+                    placeholder="Enter field name..."
+                  />
+                </div>
+              )}
             </>
           )}
 
@@ -299,7 +323,7 @@ export const AddNewItemDialog = ({
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
-          <Button variant="ghost" onClick={handleCancel} disabled={isLoading}>
+          <Button variant="ghost" onClick={handleCancel} disabled={isLoading} className="hover:bg-muted hover:text-foreground">
             Cancel
           </Button>
           <Button onClick={handleSave} disabled={!isValid || isLoading}>

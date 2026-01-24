@@ -31,7 +31,7 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-background">
       <UserHeader />
-      <main className="py-6 px-4">
+      <main className="container py-6 px-4">
         <div className="mb-6">
           <h1 className="text-2xl font-bold tracking-tight">Translations</h1>
           <p className="text-muted-foreground">
