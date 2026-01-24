@@ -21,6 +21,10 @@ export default defineConfig(({ mode }) => ({
   build: {
     rollupOptions: {
       output: {
+        // Disable hash in filenames for consistent output
+        entryFileNames: 'assets/[name].js',
+        chunkFileNames: 'assets/[name].js',
+        assetFileNames: 'assets/[name].[ext]',
         manualChunks: {
           // Vendor chunks
           'vendor-react': ['react', 'react-dom'],
