@@ -129,6 +129,17 @@ export const TranslationsTable = () => {
     pageSize: appConfig.table.pageSize,
   });
 
+  // Store next/previous URLs from backend
+  const [nextUrl, setNextUrl] = useState<string | null>(null);
+  const [previousUrl, setPreviousUrl] = useState<string | null>(null);
+
+  // Reset to page 1 when search or filters change
+  useEffect(() => {
+    setPagination(prev => ({ ...prev, pageIndex: 0 }));
+    setNextUrl(null);
+    setPreviousUrl(null);
+  }, [debouncedGlobalFilter, exactMatch, filters]);
+
   // Set API token when authenticated
   useEffect(() => {
     const token = getToken();
@@ -156,7 +167,7 @@ export const TranslationsTable = () => {
       exactMatch,
       filters,
     }],
-    queryFn: () => {
+    queryFn: async () => {
       // Prepare filters - convert categories array to proper format for API
       const apiFilters: Record<string, string | string[]> = {};
       
@@ -173,7 +184,7 @@ export const TranslationsTable = () => {
         apiFilters.client = filters.client;
       }
       
-      return api.getTranslations({
+      const result = await api.getTranslations({
         page: pagination.pageIndex + 1, // API uses 1-based pagination
         pageSize: pagination.pageSize,
         sortBy: sorting[0]?.id || 'id', // Default sort by ID
@@ -182,6 +193,12 @@ export const TranslationsTable = () => {
         exactMatch,
         filters: apiFilters,
       });
+
+      // Store next/previous URLs for pagination
+      setNextUrl(result.next || null);
+      setPreviousUrl(result.previous || null);
+
+      return result;
     },
   });
 
@@ -858,8 +875,8 @@ export const TranslationsTable = () => {
             variant="outline"
             size="icon"
             className="h-8 w-8"
-            onClick={() => table.setPageIndex(0)}
-            disabled={!table.getCanPreviousPage()}
+            onClick={() => setPagination(prev => ({ ...prev, pageIndex: 0 }))}
+            disabled={!previousUrl}
           >
             <ChevronsLeft className="h-4 w-4" />
           </Button>
@@ -867,8 +884,8 @@ export const TranslationsTable = () => {
             variant="outline"
             size="icon"
             className="h-8 w-8"
-            onClick={() => table.previousPage()}
-            disabled={!table.getCanPreviousPage()}
+            onClick={() => setPagination(prev => ({ ...prev, pageIndex: Math.max(0, prev.pageIndex - 1) }))}
+            disabled={!previousUrl}
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
@@ -876,8 +893,8 @@ export const TranslationsTable = () => {
             variant="outline"
             size="icon"
             className="h-8 w-8"
-            onClick={() => table.nextPage()}
-            disabled={!table.getCanNextPage()}
+            onClick={() => setPagination(prev => ({ ...prev, pageIndex: prev.pageIndex + 1 }))}
+            disabled={!nextUrl}
           >
             <ChevronRight className="h-4 w-4" />
           </Button>
@@ -885,8 +902,8 @@ export const TranslationsTable = () => {
             variant="outline"
             size="icon"
             className="h-8 w-8"
-            onClick={() => table.setPageIndex(table.getPageCount() - 1)}
-            disabled={!table.getCanNextPage()}
+            onClick={() => setPagination(prev => ({ ...prev, pageIndex: table.getPageCount() - 1 }))}
+            disabled={!nextUrl}
           >
             <ChevronsRight className="h-4 w-4" />
           </Button>

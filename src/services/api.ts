@@ -98,13 +98,15 @@ class ApiService {
     sortBy?: string;
     sortOrder?: 'asc' | 'desc';
     filters?: Record<string, string | string[]>;
-  }): Promise<{ data: Translation[]; total: number }> {
+  }): Promise<{ data: Translation[]; total: number; next?: string | null; previous?: string | null }> {
     const queryParams = new URLSearchParams();
     if (params?.search) {
       const searchParam = params.exactMatch ? 'exact' : 'search';
       queryParams.set(searchParam, params.search);
     }
-    if (params?.page) queryParams.set('page', params.page.toString());
+    if (params?.page) {
+      queryParams.set('page', params.page.toString());
+    }
     if (params?.filters) {
       Object.entries(params.filters).forEach(([key, value]) => {
         if (Array.isArray(value)) {
@@ -117,13 +119,45 @@ class ApiService {
     }
 
     const query = queryParams.toString();
-    const response = await this.request<{ results?: Translation[]; data?: Translation[]; total?: number; count?: number }>(
+    const response = await this.request<{ 
+      results?: Translation[]; 
+      data?: Translation[]; 
+      total?: number; 
+      count?: number;
+      next?: string | null;
+      previous?: string | null;
+    }>(
       `${endpoints.translations}${query ? `?${query}` : ''}`
     );
 
     return {
       data: response.results || response.data || [],
       total: response.total || response.count || (response.results || response.data || []).length,
+      next: response.next,
+      previous: response.previous,
+    };
+  }
+
+  // Fetch translations from a full URL (for next/previous pagination)
+  async getTranslationsFromUrl(url: string): Promise<{ data: Translation[]; total: number; next?: string | null; previous?: string | null }> {
+    // Extract just the path and query from the URL
+    const urlObj = new URL(url);
+    const endpoint = urlObj.pathname + urlObj.search;
+    
+    const response = await this.request<{ 
+      results?: Translation[]; 
+      data?: Translation[]; 
+      total?: number; 
+      count?: number;
+      next?: string | null;
+      previous?: string | null;
+    }>(endpoint);
+
+    return {
+      data: response.results || response.data || [],
+      total: response.total || response.count || (response.results || response.data || []).length,
+      next: response.next,
+      previous: response.previous,
     };
   }
 
