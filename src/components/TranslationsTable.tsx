@@ -708,7 +708,7 @@ export const TranslationsTable = () => {
               onCheckedChange={(checked) => setExactMatch(!!checked)}
             />
             <Label htmlFor="exact-match" className="text-sm font-normal cursor-pointer whitespace-nowrap">
-              Match exact
+              Matches entire English text (case sensitive)
             </Label>
           </div>
 
