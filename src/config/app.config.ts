@@ -15,7 +15,7 @@ export const appConfig = {
 
   // API Configuration - Base URL for Django backend
   api: {
-    baseUrl: 'http://localhost:8000/api/v1/', // Will be same-origin in production
+    baseUrl: 'https://ldssetupdev.ilsp.gr/translation-hub/api/v1/', // Will be same-origin in production
     endpoints: {
       translations: 'translations',
       import: 'translations/import',
