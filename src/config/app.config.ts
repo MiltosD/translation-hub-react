@@ -37,8 +37,6 @@ export const appConfig = {
     { code: 'sv', name: 'Swedish' },
     { code: 'da', name: 'Danish' },
     { code: 'fi', name: 'Finnish' },
-    { code: 'nb', name: 'Norwegian Bokmål' },
-    { code: 'nn', name: 'Norwegian Nynorsk' },
     { code: 'el', name: 'Greek' },
     { code: 'cs', name: 'Czech' },
     { code: 'ro', name: 'Romanian' },
