@@ -8,14 +8,14 @@ import { s } from "node_modules/vite/dist/node/types.d-aGj9QkWt";
 export const appConfig = {
   // Keycloak OIDC Configuration
   keycloak: {
-    url: 'https://ldssetupdev.ilsp.gr/authreg/',
+    url: 'https://ldssetup.ilsp.gr/authreg/',
     realm: 'TRANSLATION',
     clientId: 'translation-hub-pub',
   },
 
   // API Configuration - Base URL for Django backend
   api: {
-    baseUrl: 'https://ldssetupdev.ilsp.gr/translation-hub/api/v1/', // Will be same-origin in production
+    baseUrl: 'https://ldssetup.ilsp.gr/translation-hub/api/v1/', // Will be same-origin in production
     endpoints: {
       translations: 'translations',
       import: 'translations/import',
@@ -52,6 +52,7 @@ export const appConfig = {
 
   // Bucket options (admin only)
   buckets: [
+    { id: 'EXT', name: 'EXT' },
     { id: 'DCAT-AP', name: 'DCAT-AP' },
     { id: 'METADATA', name: 'METADATA' },
     { id: 'MESSAGES', name: 'MESSAGES' },
