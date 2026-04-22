@@ -20,7 +20,11 @@ interface NonAdminCreateData {
 
 type CreateTranslationData = AdminCreateData | NonAdminCreateData;
 
-export type { AdminCreateData, NonAdminCreateData, CreateTranslationData };
+type UpdateTranslationData = Partial<Omit<Translation, 'translations'>> & {
+  translations?: Record<string, string>;
+};
+
+export type { AdminCreateData, NonAdminCreateData, CreateTranslationData, UpdateTranslationData };
 
 const { baseUrl, endpoints } = appConfig.api;
 
@@ -48,11 +52,11 @@ class ApiService {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({ message: 'Request failed' }));
-      
+
       // Format field-specific errors
       if (errorData && typeof errorData === 'object' && !errorData.message) {
         const formattedErrors: string[] = [];
-        
+
         for (const [field, errors] of Object.entries(errorData)) {
           if (Array.isArray(errors)) {
             errors.forEach(err => {
@@ -62,16 +66,16 @@ class ApiService {
             formattedErrors.push(`${field}\n${errors}`);
           }
         }
-        
+
         if (formattedErrors.length > 0) {
           const error = new Error(formattedErrors.join('\n\n')) as Error & { details: unknown };
           error.details = errorData;
           throw error;
         }
       }
-      
+
       // Fallback to regular error or stringify the whole response
-      const errorMessage = errorData.message || 
+      const errorMessage = errorData.message ||
         (typeof errorData === 'object' ? JSON.stringify(errorData, null, 2) : 'Request failed');
       const error = new Error(errorMessage) as Error & { details: unknown };
       error.details = errorData;
@@ -119,10 +123,10 @@ class ApiService {
     }
 
     const query = queryParams.toString();
-    const response = await this.request<{ 
-      results?: Translation[]; 
-      data?: Translation[]; 
-      total?: number; 
+    const response = await this.request<{
+      results?: Translation[];
+      data?: Translation[];
+      total?: number;
       count?: number;
       next?: string | null;
       previous?: string | null;
@@ -143,11 +147,11 @@ class ApiService {
     // Extract just the path and query from the URL
     const urlObj = new URL(url);
     const endpoint = urlObj.pathname + urlObj.search;
-    
-    const response = await this.request<{ 
-      results?: Translation[]; 
-      data?: Translation[]; 
-      total?: number; 
+
+    const response = await this.request<{
+      results?: Translation[];
+      data?: Translation[];
+      total?: number;
       count?: number;
       next?: string | null;
       previous?: string | null;
@@ -169,9 +173,9 @@ class ApiService {
     });
   }
 
-  async updateTranslation(id: number, translation: Partial<Translation>): Promise<Translation> {
+  async updateTranslation(id: number, translation: UpdateTranslationData): Promise<Translation> {
     return this.request<Translation>(`${endpoints.translations}/${id}/`, {
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify(translation),
     });
   }
@@ -196,6 +200,13 @@ class ApiService {
     await this.request<void>(`${endpoints.translations}/bulk-delete/`, {
       method: 'POST',
       body: JSON.stringify({ ids }),
+    });
+  }
+
+  async adminTranslate(data: Array<string>): Promise<any> {
+    return this.request<any>(`${endpoints.translations}/admin-translate/`, {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   }
 

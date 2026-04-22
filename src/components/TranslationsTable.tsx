@@ -80,7 +80,7 @@ const ImportDialog = lazy(() => import('./ImportDialog').then(module => ({ defau
 const ExportMenu = lazy(() => import('./ExportMenu').then(module => ({ default: module.ExportMenu })));
 const ConfirmDialog = lazy(() => import('./ConfirmDialog').then(module => ({ default: module.ConfirmDialog })));
 import type { Translation, TranslationValue, ExportFormat } from '@/types/translation';
-import type { AdminCreateData, NonAdminCreateData } from '@/services/api';
+import type { AdminCreateData, NonAdminCreateData, UpdateTranslationData } from '@/services/api';
 
 // Types for create requests
 interface AdminCreateRequest {
@@ -111,18 +111,20 @@ export const TranslationsTable = () => {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [globalFilter, setGlobalFilter] = useState('');
   const [exactMatch, setExactMatch] = useState(false);
-  
+
   // Debounce search with 500ms delay and 2 character minimum
   const debouncedGlobalFilter = useDebounce(globalFilter, 500, 2);
-  
+
   const [filters, setFilters] = useState<{
     bucket: string;
     categories: string[];
     client: string;
+    incomplete: boolean;
   }>({
     bucket: 'all',
     categories: [],
     client: '',
+    incomplete: false,
   });
   const [pagination, setPagination] = useState({
     pageIndex: 0,
@@ -153,7 +155,7 @@ export const TranslationsTable = () => {
   const [importOpen, setImportOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
-  
+
   const [selectedItem, setSelectedItem] = useState<Translation | null>(null);
 
   // Fetch translations
@@ -170,20 +172,24 @@ export const TranslationsTable = () => {
     queryFn: async () => {
       // Prepare filters - convert categories array to proper format for API
       const apiFilters: Record<string, string | string[]> = {};
-      
+
       if (filters.bucket && filters.bucket !== 'all') {
         apiFilters.bucket = filters.bucket;
       }
-      
+
       if (filters.categories.length > 0) {
         // Send as array for multiple filter_categories params
         apiFilters.categories = filters.categories;
       }
-      
+
       if (filters.client) {
         apiFilters.client = filters.client;
       }
-      
+
+      if (filters.incomplete) {
+        apiFilters.incomplete = 'true';
+      }
+
       const result = await api.getTranslations({
         page: pagination.pageIndex + 1, // API uses 1-based pagination
         pageSize: pagination.pageSize,
@@ -204,6 +210,16 @@ export const TranslationsTable = () => {
 
   const data = translationsData?.data || [];
   const totalCount = translationsData?.total || 0;
+
+  // Update selectedItem when data refetches and dialog is open
+  useEffect(() => {
+    if (editDialogOpen && selectedItem && data.length > 0) {
+      const updatedItem = data.find(item => item.id === selectedItem.id);
+      if (updatedItem) {
+        setSelectedItem(updatedItem);
+      }
+    }
+  }, [data, editDialogOpen, selectedItem]);
 
   // Mutations
   const createMutation = useMutation({
@@ -230,7 +246,7 @@ export const TranslationsTable = () => {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Partial<Translation> }) =>
+    mutationFn: ({ id, data }: { id: number; data: UpdateTranslationData }) =>
       api.updateTranslation(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['translations'] });
@@ -304,10 +320,10 @@ export const TranslationsTable = () => {
 
   const getCategories = (category: Translation['category']) => {
     if (!category) return '-';
-    
+
     // Parse the category - could be a string like "CONNECTOR", "FC", or JSON array like '["CONNECTOR", "FC"]'
     let categories: string[] = [];
-    
+
     // Try parsing as JSON array first
     try {
       const parsed = JSON.parse(category);
@@ -325,7 +341,7 @@ export const TranslationsTable = () => {
         categories = [categoryStr];
       }
     }
-    
+
     // Map to display names: CONNECTOR -> CON, FC -> FC
     const displayNames = categories
       .filter(cat => cat && String(cat).trim()) // Filter out empty/null values
@@ -335,7 +351,7 @@ export const TranslationsTable = () => {
         if (upperCat === 'FC') return 'FC';
         return cat;
       });
-    
+
     return displayNames.length > 0 ? displayNames.join('/') : '-';
   };
 
@@ -389,45 +405,59 @@ export const TranslationsTable = () => {
     setSelectedItem(null);
   };
 
-  const handleSaveTranslations = async (translations: TranslationValue[], newSourceText?: string) => {
+  const handleSaveTranslations = async (
+    translations: TranslationValue[],
+    newSourceText?: string,
+    forceSaveLanguages?: string[],
+    newMessageFieldName?: string
+  ) => {
     if (selectedItem) {
-      // Update source text if changed (admin only)
-      if (newSourceText && newSourceText !== selectedItem.text) {
-        await updateMutation.mutateAsync({
-          id: selectedItem.id,
-          data: { text: newSourceText }
-        });
-      }
-
       // Create a map of existing translations for comparison
       const existingTranslationsMap = selectedItem.translations.reduce((acc, t) => {
-        acc[t.language] = t.value;
+        acc[t.language] = t;
         return acc;
-      }, {} as Record<string, string>);
+      }, {} as Record<string, TranslationValue>);
 
-      // Only update translations that have actually changed
-      const updatePromises = translations
+      // Include all changed translations (or force-saved ones) in one PATCH payload
+      const changedTranslations = translations
         .filter((translation) => {
-          const existingValue = existingTranslationsMap[translation.language];
-          return existingValue !== translation.value;
+          const existing = existingTranslationsMap[translation.language];
+          const valueChanged = existing.value !== translation.value;
+          const forceSave = forceSaveLanguages?.includes(translation.language);
+          return valueChanged || forceSave;
         })
-        .map((translation) =>
-          updateLanguageMutation.mutateAsync({
-            id: selectedItem.id,
-            language: translation.language,
-            value: translation.value
-          })
-        );
+        .reduce((acc, translation) => {
+          acc[translation.language] = translation.value;
+          return acc;
+        }, {} as Record<string, string>);
 
-      await Promise.all(updatePromises);
+      const hasSourceTextChange =
+        newSourceText !== undefined && newSourceText !== selectedItem.text;
+      const hasMessageFieldNameChange =
+        newMessageFieldName !== undefined &&
+        newMessageFieldName !== (selectedItem.message_field_name || '');
+      const hasTranslationChanges = Object.keys(changedTranslations).length > 0;
+
+      if (!hasSourceTextChange && !hasMessageFieldNameChange && !hasTranslationChanges) {
+        return;
+      }
+
+      const patchPayload: UpdateTranslationData = {
+        ...(hasSourceTextChange ? { text: newSourceText } : {}),
+        ...(hasMessageFieldNameChange ? { message_field_name: newMessageFieldName } : {}),
+        ...(hasTranslationChanges ? { translations: changedTranslations } : {}),
+      };
+
+      await updateMutation.mutateAsync({
+        id: selectedItem.id,
+        data: patchPayload,
+      });
     }
-    setEditDialogOpen(false);
-    setSelectedItem(null);
   };
 
-  const handleSaveNewItem = (item: AdminCreateRequest | NonAdminCreateRequest) => {
+  const handleSaveNewItem = async (item: AdminCreateRequest | NonAdminCreateRequest): Promise<void> => {
     console.log('handleSaveNewItem called with:', item);
-    
+
     // For admin requests, send the data directly
     if ('translations' in item) {
       // Admin request - send category as array
@@ -435,14 +465,15 @@ export const TranslationsTable = () => {
         text: item.text,
         translations: item.translations.map(t => ({
           language: t.language,
-          value: t.value
+          value: t.value,
+          auto: t.auto,
         })),
         ...(item.message_field_name && { message_field_name: item.message_field_name }),
         ...(item.bucket && { bucket: item.bucket }),
         ...(item.category && item.category.length > 0 && { category: item.category }),
       };
       console.log('Sending admin data:', adminData);
-      createMutation.mutate(adminData);
+      await createMutation.mutateAsync(adminData);
     } else {
       // Non-admin request - send text + client from JWT
       const nonAdminData = {
@@ -450,9 +481,9 @@ export const TranslationsTable = () => {
         client: item.client,
       };
       console.log('Sending non-admin data:', nonAdminData);
-      createMutation.mutate(nonAdminData);
+      await createMutation.mutateAsync(nonAdminData);
     }
-    
+
     // Dialog will be closed by the mutation onSuccess handler
   };
 
@@ -725,7 +756,20 @@ export const TranslationsTable = () => {
               onCheckedChange={(checked) => setExactMatch(!!checked)}
             />
             <Label htmlFor="exact-match" className="text-sm font-normal cursor-pointer whitespace-nowrap">
-              Matches the entire English text (case sensitive)
+              Exact English text match (case sensitive)
+            </Label>
+          </div>
+
+          <div className="flex items-center gap-2 pb-2">
+            <Checkbox
+              id="filter-incomplete"
+              checked={filters.incomplete}
+              onCheckedChange={(checked) =>
+                setFilters((prev) => ({ ...prev, incomplete: !!checked }))
+              }
+            />
+            <Label htmlFor="filter-incomplete" className="text-sm font-normal cursor-pointer whitespace-nowrap">
+              Not translated in all languages
             </Label>
           </div>
 
@@ -792,8 +836,13 @@ export const TranslationsTable = () => {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setFilters({ bucket: 'all', categories: [], client: '' })}
-            disabled={filters.bucket === 'all' && filters.categories.length === 0 && !filters.client}
+            onClick={() => setFilters({ bucket: 'all', categories: [], client: '', incomplete: false })}
+            disabled={
+              filters.bucket === 'all' &&
+              filters.categories.length === 0 &&
+              !filters.client &&
+              !filters.incomplete
+            }
           >
             Clear Filters
           </Button>
@@ -842,6 +891,19 @@ export const TranslationsTable = () => {
             />
             <Label htmlFor="exact-match" className="text-sm font-normal cursor-pointer whitespace-nowrap">
               Matches the entire English text (case sensitive)
+            </Label>
+          </div>
+
+          <div className="flex items-center gap-2 pb-2">
+            <Checkbox
+              id="filter-incomplete"
+              checked={filters.incomplete}
+              onCheckedChange={(checked) =>
+                setFilters((prev) => ({ ...prev, incomplete: !!checked }))
+              }
+            />
+            <Label htmlFor="filter-incomplete" className="text-sm font-normal cursor-pointer whitespace-nowrap">
+              Not translated in all languages
             </Label>
           </div>
 
@@ -930,9 +992,9 @@ export const TranslationsTable = () => {
                       {header.isPlaceholder
                         ? null
                         : flexRender(
-                            header.column.columnDef.header,
-                            header.getContext()
-                          )}
+                          header.column.columnDef.header,
+                          header.getContext()
+                        )}
                     </TableHead>
                   ))}
                 </TableRow>
@@ -941,61 +1003,61 @@ export const TranslationsTable = () => {
             <TableBody>
               {table.getRowModel().rows?.length ? (
                 table.getRowModel().rows.map((row) => (
-                <ContextMenu key={row.id}>
-                  <ContextMenuTrigger asChild>
-                    <TableRow
-                      data-state={row.getIsSelected() && 'selected'}
-                      className="hover:bg-table-row-hover data-[state=selected]:bg-table-row-selected"
-                    >
-                      {row.getVisibleCells().map((cell) => (
-                        <TableCell key={cell.id}>
-                          {flexRender(
-                            cell.column.columnDef.cell,
-                            cell.getContext()
-                          )}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  </ContextMenuTrigger>
-                  <ContextMenuContent>
-                    <ContextMenuItem 
-                      onClick={() => handleAddLanguage(row.original)}
-                      disabled={!hasAvailableLanguages(row.original)}
-                    >
-                      <Languages className="h-4 w-4 mr-2" />
-                      Add Language
-                    </ContextMenuItem>
-                    <ContextMenuItem onClick={() => handleEdit(row.original)}>
-                      <Pencil className="h-4 w-4 mr-2" />
-                      Edit
-                    </ContextMenuItem>
-                    {isAdmin && (
-                      <>
-                        <ContextMenuSeparator />
-                        <ContextMenuItem
-                          onClick={() => handleDelete(row.original)}
-                          className="text-destructive focus:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4 mr-2" />
-                          Delete
-                        </ContextMenuItem>
-                      </>
-                    )}
-                  </ContextMenuContent>
-                </ContextMenu>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell
-                  colSpan={columns.length}
-                  className="h-24 text-center"
-                >
-                  No results found.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
+                  <ContextMenu key={row.id}>
+                    <ContextMenuTrigger asChild>
+                      <TableRow
+                        data-state={row.getIsSelected() && 'selected'}
+                        className="hover:bg-table-row-hover data-[state=selected]:bg-table-row-selected"
+                      >
+                        {row.getVisibleCells().map((cell) => (
+                          <TableCell key={cell.id}>
+                            {flexRender(
+                              cell.column.columnDef.cell,
+                              cell.getContext()
+                            )}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent>
+                      <ContextMenuItem
+                        onClick={() => handleAddLanguage(row.original)}
+                        disabled={!hasAvailableLanguages(row.original)}
+                      >
+                        <Languages className="h-4 w-4 mr-2" />
+                        Add Language
+                      </ContextMenuItem>
+                      <ContextMenuItem onClick={() => handleEdit(row.original)}>
+                        <Pencil className="h-4 w-4 mr-2" />
+                        Edit
+                      </ContextMenuItem>
+                      {isAdmin && (
+                        <>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem
+                            onClick={() => handleDelete(row.original)}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Delete
+                          </ContextMenuItem>
+                        </>
+                      )}
+                    </ContextMenuContent>
+                  </ContextMenu>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell
+                    colSpan={columns.length}
+                    className="h-24 text-center"
+                  >
+                    No results found.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
         )}
       </div>
 

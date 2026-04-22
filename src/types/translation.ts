@@ -4,6 +4,7 @@ import { B } from "vitest/dist/chunks/worker.d.1GmBbd7G.js";
 export interface TranslationValue {
   language: string;
   value: string;
+  auto?: boolean;
 }
 
 export interface Translation {
